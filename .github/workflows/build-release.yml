@@ -15,98 +15,73 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Get upstream latest tag
-        id: upstream
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = ""
-          try {
-            $output = gh release list --repo OpenSteam001/OpenSteamTool --limit 1 --json tagName --jq '.[0].tagName' 2>&1
-            if ($LASTEXITCODE -eq 0 -and $output) {
-              $tag = $output.Trim()
-            }
-          } catch {}
-          echo "tag=$tag" >> $env:GITHUB_OUTPUT
-          Write-Host "Upstream latest tag: $tag"
-        shell: pwsh
-
-      - name: Check if release exists on fork
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = "${{ steps.upstream.outputs.tag }}"
-          if (-not $tag) {
-            echo "skip=true" >> $env:GITHUB_OUTPUT
-            Write-Host "No tag, skipping"
-            exit 0
-          }
-          $skip = "true"
-          try {
-            $output = gh release view "$tag" --repo "${{ github.repository }}" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              $skip = "false"
-            }
-          } catch {
-            $skip = "false"
-          }
-          echo "skip=$skip" >> $env:GITHUB_OUTPUT
-          Write-Host "Tag: $tag, Skip: $skip"
-        shell: pwsh
-
       - uses: actions/checkout@v4
-        if: steps.check.outputs.skip == 'false'
         with:
-          repository: OpenSteam001/OpenSteamTool
-          ref: ${{ steps.upstream.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $upstream = ""
+          try {
+            $r = gh release list --repo OpenSteam001/OpenSteamTool --limit 1 --json tagName --jq '.[0].tagName' 2>&1
+            if ($LASTEXITCODE -eq 0 -and $r) { $upstream = $r.Trim() }
+          } catch {}
+          $local = ""
+          try {
+            $r = gh release list --repo "${{ github.repository }}" --limit 1 --json tagName --jq '.[0].tagName' 2>&1
+            if ($LASTEXITCODE -eq 0 -and $r) { $local = $r.Trim() }
+          } catch {}
+          Write-Host "Upstream: $upstream, Local: $local"
+          if ($upstream -and $upstream -ne $local) {
+            echo "tag=$upstream" >> $env:GITHUB_OUTPUT
+            echo "create=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "tag=" >> $env:GITHUB_OUTPUT
+            echo "create=false" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
 
       - uses: ilammy/msvc-dev-cmd@v1
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
 
       - name: Install Ninja
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         run: choco install ninja -y
         shell: pwsh
 
       - name: Configure
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         run: cmake -S src -B build -G "Ninja Multi-Config"
 
       - name: Build Release
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         run: cmake --build build --config Release
 
       - name: Build Debug
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         run: cmake --build build --config Debug
 
       - name: Package
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         run: |
-          $tag = "${{ steps.upstream.outputs.tag }}"
+          $tag = "${{ steps.tag.outputs.tag }}"
           New-Item -ItemType Directory -Force -Path release | Out-Null
-
           Compress-Archive -Path "build/Release/dwmapi.dll","build/Release/xinput1_4.dll","build/Release/OpenSteamTool.dll" -DestinationPath "release/OpenSteamTool-${tag}-Release.zip" -Force
-          Write-Host "Created Release zip"
-
-          $debugFiles = @("build/Debug/dwmapi.dll","build/Debug/xinput1_4.dll","build/Debug/OpenSteamTool.dll")
-          if (Test-Path "build/Debug/opensteamtool.log") { $debugFiles += "build/Debug/opensteamtool.log" }
-          Compress-Archive -Path $debugFiles -DestinationPath "release/OpenSteamTool-${tag}-Debug.zip" -Force
-          Write-Host "Created Debug zip"
-
+          $dbg = @("build/Debug/dwmapi.dll","build/Debug/xinput1_4.dll","build/Debug/OpenSteamTool.dll")
+          if (Test-Path "build/Debug/opensteamtool.log") { $dbg += "build/Debug/opensteamtool.log" }
+          Compress-Archive -Path $dbg -DestinationPath "release/OpenSteamTool-${tag}-Debug.zip" -Force
           Get-ChildItem release/
         shell: pwsh
 
       - name: Create Release
-        if: steps.check.outputs.skip == 'false'
+        if: steps.tag.outputs.create == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ steps.upstream.outputs.tag }}"
-          gh release create "$tag" `
-            --repo "${{ github.repository }}" `
-            --title "$tag" `
-            --generate-notes `
-            release/*.zip
+          $tag = "${{ steps.tag.outputs.tag }}"
+          gh release create "$tag" --repo "${{ github.repository }}" --title "$tag" --generate-notes release/*.zip
+          Write-Host "Release $tag created"
         shell: pwsh
