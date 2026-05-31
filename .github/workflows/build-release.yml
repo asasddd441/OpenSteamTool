@@ -1,0 +1,93 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag from upstream
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release view --repo OpenSteam001/OpenSteamTool --json tagName -q .tagName 2>/dev/null || echo "")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Upstream latest: $TAG"
+
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          if [ -z "$TAG" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No upstream tag found"
+          elif gh release view "$TAG" --repo "${{ github.repository }}" 2>/dev/null; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Release $TAG already exists on fork"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Will create release $TAG"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip == 'false'
+        with:
+          repository: OpenSteam001/OpenSteamTool
+          ref: ${{ steps.upstream.outputs.tag }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: steps.check.outputs.skip == 'false'
+
+      - name: Configure
+        if: steps.check.outputs.skip == 'false'
+        run: cmake -S src -B build -G "Ninja Multi-Config"
+
+      - name: Build Release
+        if: steps.check.outputs.skip == 'false'
+        run: cmake --build build --config Release
+
+      - name: Build Debug
+        if: steps.check.outputs.skip == 'false'
+        run: cmake --build build --config Debug
+
+      - name: Package
+        if: steps.check.outputs.skip == 'false'
+        shell: bash
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          mkdir -p release
+          cd build/Release
+          7z a "../../release/OpenSteamTool-${TAG}-Release.zip" dwmapi.dll xinput1_4.dll OpenSteamTool.dll
+          cd ../Debug
+          7z a "../../release/OpenSteamTool-${TAG}-Debug.zip" dwmapi.dll xinput1_4.dll OpenSteamTool.dll opensteamtool.log
+
+      - name: Create Release
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.upstream.outputs.tag }}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --generate-notes \
+            release/*.zip
