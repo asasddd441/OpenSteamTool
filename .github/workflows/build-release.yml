@@ -2,17 +2,27 @@ name: Build & Release OpenSteamTool
 
 on:
   push:
-    branches: [ main ]  # 只要 main 分支有新提交（包括同步上游），就自动构建
-  workflow_dispatch:     # 支持手动触发构建
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write   # 必须，否则无法创建 Release
+      contents: write
     steps:
       - name: 拉取最新代码
         uses: actions/checkout@v4
+
+      # 👇 新增这一步，修复编译错误
+      - name: 修复 structs.h 编译错误
+        run: |
+          $structFile = ".\SRC\Steam\structs.h"
+          $content = Get-Content $structFile -Raw
+          if (-not $content.Contains("#include <cstring>")) {
+              $content = "#include <cstring>`n" + $content
+              Set-Content $structFile $content
+          }
 
       - name: 运行原项目构建脚本
         run: |
@@ -20,8 +30,8 @@ jobs:
 
       - name: 打包文件
         run: |
-          mkdir release
-          Compress-Archive -Path .\SRC\* -DestinationPath .\release\OpenSteamTool.zip
+          mkdir release -Force
+          Compress-Archive -Path .\SRC\* -DestinationPath .\release\OpenSteamTool.zip -Force
 
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
