@@ -1,0 +1,32 @@
+name: Build & Release OpenSteamTool
+
+on:
+  push:
+    branches: [ main ]  # 只要 main 分支有新提交（包括同步上游），就自动构建
+  workflow_dispatch:     # 支持手动触发构建
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # 必须，否则无法创建 Release
+    steps:
+      - name: 拉取最新代码
+        uses: actions/checkout@v4
+
+      - name: 运行原项目构建脚本
+        run: |
+          .\build.bat
+
+      - name: 打包文件
+        run: |
+          mkdir release
+          Compress-Archive -Path .\SRC\* -DestinationPath .\release\OpenSteamTool.zip
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/OpenSteamTool.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
