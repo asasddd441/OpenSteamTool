@@ -14,39 +14,42 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-    defaults:
-      run:
-        shell: bash
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get latest tag from upstream
+      - name: Get upstream latest tag
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh release view --repo OpenSteam001/OpenSteamTool --json tagName -q .tagName 2>/dev/null || echo "")
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Upstream latest: $TAG"
+          $tag = gh release view --repo OpenSteam001/OpenSteamTool --json tagName -q tagName 2>$null
+          if ($tag) {
+            echo "tag=$tag" >> $env:GITHUB_OUTPUT
+            Write-Host "Upstream latest: $tag"
+          } else {
+            echo "tag=" >> $env:GITHUB_OUTPUT
+            Write-Host "No upstream tag found"
+          }
+        shell: pwsh
 
-      - name: Check if release already exists
+      - name: Check if release exists on fork
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.upstream.outputs.tag }}
         run: |
-          if [ -z "$TAG" ]; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "No upstream tag found"
-          elif gh release view "$TAG" --repo "${{ github.repository }}" 2>/dev/null; then
-            echo "skip=true" >> $GITHUB_OUTPUT
-            echo "Release $TAG already exists on fork"
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "Will create release $TAG"
-          fi
+          $tag = "${{ steps.upstream.outputs.tag }}"
+          if (-not $tag) {
+            echo "skip=true" >> $env:GITHUB_OUTPUT
+            Write-Host "No tag, skipping"
+            exit 0
+          }
+          $existing = gh release view "$tag" --repo "${{ github.repository }}" 2>$null
+          if ($existing) {
+            echo "skip=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Release $tag already exists"
+          } else {
+            echo "skip=false" >> $env:GITHUB_OUTPUT
+            Write-Host "Will create release $tag"
+          }
+        shell: pwsh
 
       - uses: actions/checkout@v4
         if: steps.check.outputs.skip == 'false'
@@ -56,6 +59,11 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
         if: steps.check.outputs.skip == 'false'
+
+      - name: Install Ninja
+        if: steps.check.outputs.skip == 'false'
+        run: choco install ninja -y
+        shell: pwsh
 
       - name: Configure
         if: steps.check.outputs.skip == 'false'
@@ -71,23 +79,30 @@ jobs:
 
       - name: Package
         if: steps.check.outputs.skip == 'false'
-        shell: bash
         run: |
-          TAG="${{ steps.upstream.outputs.tag }}"
-          mkdir -p release
-          cd build/Release
-          7z a "../../release/OpenSteamTool-${TAG}-Release.zip" dwmapi.dll xinput1_4.dll OpenSteamTool.dll
-          cd ../Debug
-          7z a "../../release/OpenSteamTool-${TAG}-Debug.zip" dwmapi.dll xinput1_4.dll OpenSteamTool.dll opensteamtool.log
+          $tag = "${{ steps.upstream.outputs.tag }}"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+
+          Compress-Archive -Path "build/Release/dwmapi.dll","build/Release/xinput1_4.dll","build/Release/OpenSteamTool.dll" -DestinationPath "release/OpenSteamTool-${tag}-Release.zip" -Force
+          Write-Host "Created Release zip"
+
+          $debugFiles = @("build/Debug/dwmapi.dll","build/Debug/xinput1_4.dll","build/Debug/OpenSteamTool.dll")
+          if (Test-Path "build/Debug/opensteamtool.log") { $debugFiles += "build/Debug/opensteamtool.log" }
+          Compress-Archive -Path $debugFiles -DestinationPath "release/OpenSteamTool-${tag}-Debug.zip" -Force
+          Write-Host "Created Debug zip"
+
+          Get-ChildItem release/
+        shell: pwsh
 
       - name: Create Release
         if: steps.check.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.upstream.outputs.tag }}"
-          gh release create "$TAG" \
-            --repo "${{ github.repository }}" \
-            --title "$TAG" \
-            --generate-notes \
+          $tag = "${{ steps.upstream.outputs.tag }}"
+          gh release create "$tag" `
+            --repo "${{ github.repository }}" `
+            --title "$tag" `
+            --generate-notes `
             release/*.zip
+        shell: pwsh
