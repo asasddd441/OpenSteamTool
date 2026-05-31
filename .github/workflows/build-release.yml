@@ -16,13 +16,13 @@ jobs:
 
       - name: 添加上游仓库（原仓库）
         run: |
-          git remote add upstream https://github.com/【原仓库所有者】/【原仓库名】.git
-          git fetch upstream --tags  # 拉取原仓库所有tag
+          # 把下面这行的地址，替换成你真实的原仓库地址
+          git remote add upstream https://github.com/OpenSteam001/OpenSteamTool.git
+          git fetch upstream --tags
 
       - name: 获取上游最新版本号（vX.Y.Z）
         id: get_latest_tag
         run: |
-          # 取上游最新的 v 开头、语义化版本的 tag
           $latestTag = git ls-remote --tags upstream `
             | Select-String 'refs/tags/(v[0-9]+\.[0-9]+\.[0-9]+)$' `
             | ForEach-Object { $_.Line -replace '.*refs/tags/','' } `
@@ -31,7 +31,7 @@ jobs:
           if (-not $latestTag) { $latestTag = "v0.0.0" }
           echo "latest_tag=$latestTag" >> $env:GITHUB_OUTPUT
 
-      - name: 修复 structs.h 编译错误（保留你原来的修复）
+      - name: 修复 structs.h 编译错误
         run: |
           $structFile = ".\SRC\Steam\structs.h"
           $content = Get-Content $structFile -Raw
