@@ -20,14 +20,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = gh release view --repo OpenSteam001/OpenSteamTool --json tagName -q tagName 2>$null
-          if ($tag) {
-            echo "tag=$tag" >> $env:GITHUB_OUTPUT
-            Write-Host "Upstream latest: $tag"
-          } else {
-            echo "tag=" >> $env:GITHUB_OUTPUT
-            Write-Host "No upstream tag found"
-          }
+          $tag = ""
+          try {
+            $output = gh release list --repo OpenSteam001/OpenSteamTool --limit 1 --json tagName --jq '.[0].tagName' 2>&1
+            if ($LASTEXITCODE -eq 0 -and $output) {
+              $tag = $output.Trim()
+            }
+          } catch {}
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Upstream latest tag: $tag"
         shell: pwsh
 
       - name: Check if release exists on fork
@@ -41,14 +42,17 @@ jobs:
             Write-Host "No tag, skipping"
             exit 0
           }
-          $existing = gh release view "$tag" --repo "${{ github.repository }}" 2>$null
-          if ($existing) {
-            echo "skip=true" >> $env:GITHUB_OUTPUT
-            Write-Host "Release $tag already exists"
-          } else {
-            echo "skip=false" >> $env:GITHUB_OUTPUT
-            Write-Host "Will create release $tag"
+          $skip = "true"
+          try {
+            $output = gh release view "$tag" --repo "${{ github.repository }}" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $skip = "false"
+            }
+          } catch {
+            $skip = "false"
           }
+          echo "skip=$skip" >> $env:GITHUB_OUTPUT
+          Write-Host "Tag: $tag, Skip: $skip"
         shell: pwsh
 
       - uses: actions/checkout@v4
